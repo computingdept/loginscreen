@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Phaser – Random Maze with Button</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.js"></script>
+</head>
+<body>
+<script>
+const config = {
+  type: Phaser.AUTO,
+  width: 900,
+  height: 560,
+  backgroundColor: '#1c1208', // dark background
+  scene: { create }
+};
+new Phaser.Game(config);
+
+function create() {
+  const scene = this;
+  const W = scene.scale.width, H = scene.scale.height;
+
+  const TILE   = 20;        // visual size of each “tile” (pixels)
+  const CELLSX = 37;        // maze cells (columns)
+  const CELLSY = 25;        // maze cells (rows)
+  const PAD    = 10;        // margin around drawing area
+
+  // Graphics layer
+  const gfx = scene.add.graphics();
+
+  // UI: title
+  scene.add.text(16, 12, 'Random Maze', {
+    fontFamily:'Arial Black', fontSize:'20px', color:'#e5d6a7'
+  });
+
+  // UI: Randomise button
+  makeButton(scene, W - 120, 22, 110, 36, 'Randomise', redraw);
+  scene.input.keyboard.on('keydown-R', redraw);
+
+  // First draw
+  redraw();
+
+  function redraw() {
+    const { grid, start, end, paths } = generateMaze(CELLSX, CELLSY);
+    drawMaze(gfx, grid, start, end, paths);
+  }
+
+  // ----- GENERATION (recursive backtracker) -----
+  function generateMaze(cols, rows) {
+    // Work on a “cells + walls” grid: size = (2*rows+1) × (2*cols+1)
+    const GW = 2*cols + 1;
+    const GH = 2*rows + 1;
+    const grid = Array.from({length: GH}, () => Array(GW).fill(1)); // 1=wall, 0=path
+
+    // Carve from (1,1)
+    const visited = Array.from({length: rows}, () => Array(cols).fill(false));
+    const stack = [];
+    const startCell = {x:0, y:0};
+    stack.push(startCell);
+    visited[0][0] = true;
+    grid[1][1] = 0;
+
+    while (stack.length) {
+      const cur = stack[stack.length-1];
+      // Unvisited neighbours
+      const nbs = [];
+      if (cur.y>0     && !visited[cur.y-1][cur.x]) nbs.push({x:cur.x, y:cur.y-1, dx:0, dy:-1});
+      if (cur.y<rows-1&& !visited[cur.y+1][cur.x]) nbs.push({x:cur.x, y:cur.y+1, dx:0, dy: 1});
+      if (cur.x>0     && !visited[cur.y][cur.x-1]) nbs.push({x:cur.x-1, y:cur.y, dx:-1,dy:0});
+      if (cur.x<cols-1&& !visited[cur.y][cur.x+1]) nbs.push({x:cur.x+1, y:cur.y, dx: 1,dy:0});
+
+      if (nbs.length) {
+        const nb = Phaser.Utils.Array.GetRandom(nbs);
+        // Knock wall between cur and nb (map to odd coordinates)
+        const gx = cur.x*2+1, gy = cur.y*2+1;
+        const nx = nb.x*2+1,  ny = nb.y*2+1;
+        grid[(gy+ny)/2][(gx+nx)/2] = 0; // remove wall
+        grid[ny][nx] = 0;               // carve cell
+        visited[nb.y][nb.x] = true;
+        stack.push({x:nb.x, y:nb.y});
+      } else {
+        stack.pop();
+      }
+    }
+
+    // Open start (top) and end (bottom) gates at random path columns
+    const topCandidates = [];
+    for (let x=1; x<GW-1; x+=2) if (grid[1][x]===0) topCandidates.push(x);
+    const startX = Phaser.Utils.Array.GetRandom(topCandidates);
+    grid[0][startX] = 0;
+
+    const botCandidates = [];
+    for (let x=1; x<GW-1; x+=2) if (grid[GH-2][x]===0) botCandidates.push(x);
+    const endX = Phaser.Utils.Array.GetRandom(botCandidates);
+    grid[GH-1][endX] = 0;
+
+    // Sample some path tiles for “pickups” (green squares)
+    const pathList = [];
+    for (let y=1; y<GH-1; y++) {
+      for (let x=1; x<GW-1; x++) if (grid[y][x]===0) pathList.push({x,y});
+    }
+    Phaser.Utils.Array.Shuffle(pathList);
+    const pickups = pathList.slice(0, Math.min(12, Math.floor(pathList.length/30)));
+
+    return {
+      grid,
+      start: {x: startX, y: 0},
+      end:   {x: endX,   y: GH-1},
+      paths: pickups
+    };
+  }
+
+  // ----- RENDERING -----
+  function drawMaze(g, grid, start, end, pickups) {
+    g.clear();
+
+    const GW = grid[0].length;
+    const GH = grid.length;
+
+    // Compute scale to fit nicely with padding
+    const drawW = GW*TILE, drawH = GH*TILE;
+    const offX = Math.floor((W - drawW)/2);
+    const offY = Math.floor((H - drawH)/2);
+
+    // Draw corridors (brown) over dark background
+    const BROWN = 0x7a5a34;
+    g.fillStyle(BROWN, 1);
+    for (let y=0; y<GH; y++) {
+      for (let x=0; x<GW; x++) {
+        if (grid[y][x]===0) {
+          g.fillRect(offX + x*TILE, offY + y*TILE, TILE, TILE);
+        }
+      }
+    }
+
+    // Start & End portals (blue)
+    const BLUE = 0x24b2ff;
+    g.fillStyle(BLUE, 1);
+    g.fillRect(offX + start.x*TILE, offY + start.y*TILE, TILE, TILE);
+    g.fillRect(offX + end.x*TILE,   offY + end.y*TILE,   TILE, TILE);
+
+    // Pickups (green)
+    const GREEN = 0x2bd14a;
+    g.fillStyle(GREEN, 1);
+    pickups.forEach(p=>{
+      g.fillRect(offX + p.x*TILE + 5, offY + p.y*TILE + 5, TILE-10, TILE-10);
+    });
+
+    // Optional: tiny player square at bottom gate for flavour
+    const ORANGE = 0xff8a3d;
+    g.fillStyle(ORANGE, 1);
+    const py = end.y===GH-1 ? end.y-1 : end.y+1;
+    g.fillRect(offX + end.x*TILE + 6, offY + py*TILE + 6, TILE-12, TILE-12);
+
+    // Border (subtle)
+    g.lineStyle(2, 0x3a2b1a, 1);
+    g.strokeRect(offX, offY, drawW, drawH);
+  }
+
+  // ----- UI helper -----
+  function makeButton(scene, x, y, w, h, label, onClick) {
+    const g = scene.add.graphics({ x: x - w/2, y: y - h/2 });
+    drawBtn(g, w, h, false);
+    const t = scene.add.text(x, y, label, {
+      fontFamily:'Arial', fontSize:'16px', color:'#ffffff'
+    }).setOrigin(0.5);
+    const hit = scene.add.zone(x, y, w, h).setInteractive({ useHandCursor:true });
+    hit.on('pointerover', ()=>drawBtn(g,w,h,true));
+    hit.on('pointerout',  ()=>drawBtn(g,w,h,false));
+    hit.on('pointerdown', ()=>onClick && onClick());
+  }
+  function drawBtn(g,w,h,hover){
+    g.clear();
+    g.fillStyle(hover?0x009a70:0x006e51,1);
+    g.fillRoundedRect(0,0,w,h,8);
+    g.lineStyle(2,0xe6d971,1);
+    g.strokeRoundedRect(0,0,w,h,8);
+  }
+}
+</script>
+</body>
+</html>
