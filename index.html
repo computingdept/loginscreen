@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Phaser – Random Maze + WASD</title>
+  <title>Phaser – Random Maze + WASD (Fixed)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.js"></script>
 </head>
@@ -13,190 +13,173 @@ const config = {
   width: 900,
   height: 560,
   backgroundColor: '#1c1208',
-  scene: { create, preload: function(){} }
+  scene: { preload(){}, create, update }
 };
 new Phaser.Game(config);
 
-function create() {
-  const scene = this;
-  const W = scene.scale.width, H = scene.scale.height;
+// --- Tunables ---
+const TILE=20, CELLSX=37, CELLSY=25;
 
-  // --- Tunables ---
-  const TILE   = 20;   // pixel size of one grid cell
-  const CELLSX = 37;   // maze columns  (paths)
-  const CELLSY = 25;   // maze rows     (paths)
+let scene, gfx, W, H;
+let grid, start, end, pickups, dims={gw:0, gh:0}, offset={x:0,y:0};
+let player, playerGrid={x:0,y:0}, moving=false;
+let keys;
 
-  // State
-  let grid, start, end, pickups;
-  let drawOffset = {x:0,y:0}, dims = {gw:0, gh:0};
-  let player, playerGrid = {x:0,y:0}, moving = false;
+function create(){
+  scene = this; W = this.scale.width; H = this.scale.height;
+  gfx = this.add.graphics();
 
-  const gfx = scene.add.graphics();
-  scene.add.text(16, 12, 'Random Maze (WASD / Arrows, R = new maze)', {
+  this.add.text(16, 12, 'WASD / Arrows to move • R to randomise', {
     fontFamily:'Arial Black', fontSize:'18px', color:'#e5d6a7'
   });
 
   // Button
-  makeButton(scene, W - 120, 22, 110, 36, 'Randomise', rebuild);
-  scene.input.keyboard.on('keydown-R', rebuild);
+  makeButton(this, W - 120, 22, 110, 36, 'Randomise', rebuild);
+  this.input.keyboard.on('keydown-R', rebuild);
 
-  // Controls
-  const keys = scene.input.keyboard.addKeys({
-    up: 'W', left: 'A', down: 'S', right: 'D',
-    up2: 'UP', left2: 'LEFT', down2: 'DOWN', right2: 'RIGHT'
+  // Keys (we’ll use JustDown in update())
+  keys = this.input.keyboard.addKeys({
+    W: 'W', A: 'A', S: 'S', D: 'D',
+    UP: 'UP', LEFT: 'LEFT', DOWN: 'DOWN', RIGHT: 'RIGHT'
   });
 
-  // Player texture (tiny square)
-  const g = scene.add.graphics();
-  g.fillStyle(0xff8a3d, 1).fillRoundedRect(0,0, TILE-8, TILE-8, 4);
-  g.generateTexture('playerBox', TILE-8, TILE-8);
-  g.destroy();
+  // Player texture
+  const g = this.add.graphics();
+  g.fillStyle(0xff8a3d, 1).fillRoundedRect(0,0,TILE-8,TILE-8,4);
+  g.generateTexture('playerBox', TILE-8, TILE-8); g.destroy();
 
-  rebuild(); // first build
+  rebuild();
+}
 
-  // Movement handler
-  scene.input.keyboard.on('keydown', (ev)=>{
-    let dx=0, dy=0;
-    if (ev.code === 'KeyW' || ev.code === 'ArrowUp')    dy=-1;
-    if (ev.code === 'KeyS' || ev.code === 'ArrowDown')  dy= 1;
-    if (ev.code === 'KeyA' || ev.code === 'ArrowLeft')  dx=-1;
-    if (ev.code === 'KeyD' || ev.code === 'ArrowRight') dx= 1;
-    if (dx||dy) tryMove(dx,dy);
-  });
+function update(){
+  if (moving) return;
 
-  function tryMove(dx,dy){
-    if (moving) return;
-    const nx = playerGrid.x + dx;
-    const ny = playerGrid.y + dy;
-    // Passable if inside grid and equals 0 (corridor)
-    if (ny>=0 && ny<dims.gh && nx>=0 && nx<dims.gw && grid[ny][nx]===0){
-      moving = true;
-      playerGrid.x = nx; playerGrid.y = ny;
-      const {x:px, y:py} = gridToPx(nx, ny);
-      scene.tweens.add({
-        targets: player, x: px, y: py, duration: 120, ease: 'Sine.easeOut',
-        onComplete: ()=> moving=false
-      });
-    }
-  }
+  let dx=0, dy=0;
+  if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(keys.UP)) dy=-1;
+  else if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(keys.DOWN)) dy=1;
+  else if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(keys.LEFT)) dx=-1;
+  else if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(keys.RIGHT)) dx=1;
 
-  function rebuild(){
-    const gen = generateMaze(CELLSX, CELLSY);
-    grid = gen.grid; start = gen.start; end = gen.end; pickups = gen.paths;
-    dims.gw = grid[0].length; dims.gh = grid.length;
+  if (dx||dy) tryMove(dx,dy);
+}
 
-    // centering offset
-    const drawW = dims.gw*TILE, drawH = dims.gh*TILE;
-    drawOffset.x = Math.floor((W - drawW)/2);
-    drawOffset.y = Math.floor((H - drawH)/2);
-
-    drawMaze(gfx, grid, start, end, pickups);
-
-    // place player just inside the bottom gate
-    const spawn = { x: end.x, y: end.y === dims.gh-1 ? end.y-1 : end.y+1 };
-    playerGrid = spawn;
-
-    if (!player) {
-      const p = gridToPx(spawn.x, spawn.y);
-      player = scene.add.image(p.x, p.y, 'playerBox').setDepth(5);
-    } else {
-      const p = gridToPx(spawn.x, spawn.y);
-      player.setPosition(p.x, p.y);
-    }
-  }
-
-  // --- helpers ---
-  function gridToPx(gx, gy){
-    return {
-      x: drawOffset.x + gx*TILE + TILE/2,
-      y: drawOffset.y + gy*TILE + TILE/2
-    };
-  }
-
-  function generateMaze(cols, rows){
-    const GW = 2*cols + 1, GH = 2*rows + 1;
-    const grid = Array.from({length: GH}, () => Array(GW).fill(1)); // 1=wall, 0=path
-    const visited = Array.from({length: rows}, () => Array(cols).fill(false));
-    const stack=[{x:0,y:0}];
-    visited[0][0]=true; grid[1][1]=0;
-
-    while(stack.length){
-      const cur = stack[stack.length-1];
-      const nbs=[];
-      if(cur.y>0 && !visited[cur.y-1][cur.x]) nbs.push({x:cur.x,y:cur.y-1,dx:0,dy:-1});
-      if(cur.y<rows-1 && !visited[cur.y+1][cur.x]) nbs.push({x:cur.x,y:cur.y+1,dx:0,dy:1});
-      if(cur.x>0 && !visited[cur.y][cur.x-1]) nbs.push({x:cur.x-1,y:cur.y,dx:-1,dy:0});
-      if(cur.x<cols-1 && !visited[cur.y][cur.x+1]) nbs.push({x:cur.x+1,y:cur.y,dx:1,dy:0});
-
-      if(nbs.length){
-        const nb = Phaser.Utils.Array.GetRandom(nbs);
-        const gx = cur.x*2+1, gy = cur.y*2+1;
-        const nx = nb.x*2+1,  ny = nb.y*2+1;
-        grid[(gy+ny)/2][(gx+nx)/2]=0; grid[ny][nx]=0;
-        visited[nb.y][nb.x]=true; stack.push({x:nb.x,y:nb.y});
-      } else stack.pop();
-    }
-
-    // gates
-    const top = []; for(let x=1;x<GW-1;x+=2) if(grid[1][x]===0) top.push(x);
-    const bot = []; for(let x=1;x<GW-1;x+=2) if(grid[GH-2][x]===0) bot.push(x);
-    const startX = Phaser.Utils.Array.GetRandom(top);
-    const endX   = Phaser.Utils.Array.GetRandom(bot);
-    grid[0][startX]=0; grid[GH-1][endX]=0;
-
-    // pickups
-    const pathList=[];
-    for(let y=1;y<GH-1;y++) for(let x=1;x<GW-1;x++) if(grid[y][x]===0) pathList.push({x,y});
-    Phaser.Utils.Array.Shuffle(pathList);
-    const pickups = pathList.slice(0, Math.min(12, Math.floor(pathList.length/30)));
-    return {grid, start:{x:startX,y:0}, end:{x:endX,y:GH-1}, paths:pickups};
-  }
-
-  function drawMaze(g, grid, start, end, pickups){
-    g.clear();
-    const GW = grid[0].length, GH = grid.length;
-    const offX = drawOffset.x, offY = drawOffset.y;
-
-    // corridors
-    g.fillStyle(0x7a5a34, 1);
-    for(let y=0;y<GH;y++){
-      for(let x=0;x<GW;x++){
-        if(grid[y][x]===0){
-          g.fillRect(offX + x*TILE, offY + y*TILE, TILE, TILE);
-        }
-      }
-    }
-    // gates
-    g.fillStyle(0x24b2ff,1);
-    g.fillRect(offX + start.x*TILE, offY + start.y*TILE, TILE, TILE);
-    g.fillRect(offX + end.x*TILE,   offY + end.y*TILE,   TILE, TILE);
-
-    // pickups
-    g.fillStyle(0x2bd14a,1);
-    pickups.forEach(p=>{
-      g.fillRect(offX + p.x*TILE + 5, offY + p.y*TILE + 5, TILE-10, TILE-10);
+function tryMove(dx,dy){
+  const nx = playerGrid.x + dx;
+  const ny = playerGrid.y + dy;
+  if (ny>=0 && ny<dims.gh && nx>=0 && nx<dims.gw && grid[ny][nx]===0){
+    moving = true;
+    playerGrid.x = nx; playerGrid.y = ny;
+    const p = gridToPx(nx, ny);
+    scene.tweens.add({
+      targets: player, x: p.x, y: p.y, duration: 110, ease: 'Sine.easeOut',
+      onComplete: ()=> moving=false
     });
+  }
+}
 
-    g.lineStyle(2, 0x3a2b1a, 1);
-    g.strokeRect(offX, offY, GW*TILE, GH*TILE);
+function rebuild(){
+  const gen = generateMaze(CELLSX, CELLSY);
+  grid=gen.grid; start=gen.start; end=gen.end; pickups=gen.paths;
+  dims.gw = grid[0].length; dims.gh = grid.length;
+
+  const drawW = dims.gw*TILE, drawH = dims.gh*TILE;
+  offset.x = Math.floor((W - drawW)/2);
+  offset.y = Math.floor((H - drawH)/2);
+
+  drawMaze(gfx, grid, start, end, pickups);
+
+  // spawn just inside the bottom gate
+  const spawn = { x: end.x, y: end.y===dims.gh-1 ? end.y-1 : end.y+1 };
+  playerGrid = spawn;
+  const p = gridToPx(spawn.x, spawn.y);
+  if (!player) player = scene.add.image(p.x, p.y, 'playerBox').setDepth(5);
+  else player.setPosition(p.x, p.y);
+}
+
+/* -------- Maze generation (recursive backtracker) -------- */
+function generateMaze(cols, rows){
+  const GW=2*cols+1, GH=2*rows+1;
+  const grid = Array.from({length:GH},()=>Array(GW).fill(1)); // 1=wall,0=path
+  const visited = Array.from({length:rows},()=>Array(cols).fill(false));
+  const stack=[{x:0,y:0}];
+  visited[0][0]=true; grid[1][1]=0;
+
+  while(stack.length){
+    const cur = stack[stack.length-1];
+    const nbs=[];
+    if(cur.y>0 && !visited[cur.y-1][cur.x]) nbs.push({x:cur.x, y:cur.y-1});
+    if(cur.y<rows-1 && !visited[cur.y+1][cur.x]) nbs.push({x:cur.x, y:cur.y+1});
+    if(cur.x>0 && !visited[cur.y][cur.x-1]) nbs.push({x:cur.x-1, y:cur.y});
+    if(cur.x<cols-1 && !visited[cur.y][cur.x+1]) nbs.push({x:cur.x+1, y:cur.y});
+
+    if(nbs.length){
+      const nb = Phaser.Utils.Array.GetRandom(nbs);
+      const gx=cur.x*2+1, gy=cur.y*2+1;
+      const nx=nb.x*2+1,  ny=nb.y*2+1;
+      grid[(gy+ny)/2][(gx+nx)/2]=0; // knock wall
+      grid[ny][nx]=0;               // carve
+      visited[nb.y][nb.x]=true;
+      stack.push(nb);
+    } else stack.pop();
   }
 
-  function makeButton(scene, x, y, w, h, label, onClick){
-    const g = scene.add.graphics({x:x-w/2, y:y-h/2});
-    drawBtn(g,w,h,false);
-    scene.add.text(x, y, label, {fontFamily:'Arial', fontSize:'16px', color:'#fff'}).setOrigin(0.5);
-    scene.add.zone(x,y,w,h).setInteractive({useHandCursor:true})
-      .on('pointerover', ()=>drawBtn(g,w,h,true))
-      .on('pointerout',  ()=>drawBtn(g,w,h,false))
-      .on('pointerdown', ()=>onClick && onClick());
-  }
-  function drawBtn(g,w,h,hover){
-    g.clear();
-    g.fillStyle(hover?0x009a70:0x006e51,1);
-    g.fillRoundedRect(0,0,w,h,8);
-    g.lineStyle(2,0xe6d971,1);
-    g.strokeRoundedRect(0,0,w,h,8);
-  }
+  // gates
+  const top=[], bot=[];
+  for(let x=1;x<GW-1;x+=2){ if(grid[1][x]===0) top.push(x); if(grid[GH-2][x]===0) bot.push(x); }
+  const startX = Phaser.Utils.Array.GetRandom(top);
+  const endX   = Phaser.Utils.Array.GetRandom(bot);
+  grid[0][startX]=0; grid[GH-1][endX]=0;
+
+  // pickups
+  const cells=[];
+  for(let y=1;y<GH-1;y++) for(let x=1;x<GW-1;x++) if(grid[y][x]===0) cells.push({x,y});
+  Phaser.Utils.Array.Shuffle(cells);
+  const picks = cells.slice(0, Math.min(12, Math.floor(cells.length/30)));
+
+  return { grid, start:{x:startX,y:0}, end:{x:endX,y:GH-1}, paths:picks };
+}
+
+/* ---------------- Rendering helpers ---------------- */
+function drawMaze(g, grid, start, end, pickups){
+  g.clear();
+  const GW=grid[0].length, GH=grid.length, offX=offset.x, offY=offset.y;
+
+  // corridors
+  g.fillStyle(0x7a5a34,1);
+  for(let y=0;y<GH;y++) for(let x=0;x<GW;x++)
+    if(grid[y][x]===0) g.fillRect(offX+x*TILE, offY+y*TILE, TILE, TILE);
+
+  // gates
+  g.fillStyle(0x24b2ff,1);
+  g.fillRect(offX+start.x*TILE, offY+start.y*TILE, TILE, TILE);
+  g.fillRect(offX+end.x*TILE,   offY+end.y*TILE,   TILE, TILE);
+
+  // pickups
+  g.fillStyle(0x2bd14a,1);
+  pickups.forEach(p=> g.fillRect(offX+p.x*TILE+5, offY+p.y*TILE+5, TILE-10, TILE-10));
+
+  g.lineStyle(2,0x3a2b1a,1);
+  g.strokeRect(offX, offY, GW*TILE, GH*TILE);
+}
+
+function gridToPx(gx,gy){ return { x: offset.x + gx*TILE + TILE/2, y: offset.y + gy*TILE + TILE/2 }; }
+
+/* ---------------- UI helpers ---------------- */
+function makeButton(scene, x, y, w, h, label, onClick){
+  const g = scene.add.graphics({x:x-w/2, y:y-h/2});
+  drawBtn(g,w,h,false);
+  scene.add.text(x,y,label,{fontFamily:'Arial',fontSize:'16px',color:'#fff'}).setOrigin(0.5);
+  scene.add.zone(x,y,w,h).setInteractive({useHandCursor:true})
+    .on('pointerover',()=>drawBtn(g,w,h,true))
+    .on('pointerout', ()=>drawBtn(g,w,h,false))
+    .on('pointerdown',()=>onClick&&onClick());
+}
+function drawBtn(g,w,h,hover){
+  g.clear();
+  g.fillStyle(hover?0x009a70:0x006e51,1);
+  g.fillRoundedRect(0,0,w,h,8);
+  g.lineStyle(2,0xe6d971,1);
+  g.strokeRoundedRect(0,0,w,h,8);
 }
 </script>
 </body>
