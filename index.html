@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Phaser – 14×14 Maze (Red Player)</title>
+  <title>Phaser – 14×14 Maze (Red Player, Single Entry/Exit)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>html,body{margin:0;background:#101015}</style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.js"></script>
-  <style>html,body{margin:0;background:#1c1208}</style>
 </head>
 <body>
 <script>
@@ -13,43 +13,45 @@ const config = {
   type: Phaser.AUTO,
   width: 900,
   height: 560,
-  backgroundColor: '#1c1208',
+  backgroundColor: '#101015',
   scene: { preload(){}, create, update }
 };
 new Phaser.Game(config);
 
-// Maze settings
-const CELLSX = 14, CELLSY = 14;  // path cells (not counting walls)
-const TILE   = 28;               // pixels per tile
+// ===== SETTINGS =====
+const CELLSX = 14, CELLSY = 14;   // path cells (not counting walls)
+const TILE   = 28;                 // pixels per grid tile
 
-let scn, gfx, W, H;
+// ===== STATE =====
+let S, GFX, W, H;
 let grid, startGate, endGate, dims={gw:0,gh:0}, offset={x:0,y:0};
 let player, playerGrid={x:0,y:0}, moving=false;
 let keys, winText;
 
 function create(){
-  scn = this; W=this.scale.width; H=this.scale.height;
-  gfx = this.add.graphics();
+  S = this; W = S.scale.width; H = S.scale.height;
+  GFX = S.add.graphics();
 
-  this.add.text(16, 12, 'WASD/Arrows to move • R to randomise', {
+  S.add.text(16, 12, 'WASD / Arrows to move • R to randomise', {
     fontFamily:'Arial Black', fontSize:'18px', color:'#e5d6a7'
   });
 
-  makeButton(this, W-120, 22, 110, 36, 'Randomise', rebuild);
-  this.input.keyboard.on('keydown-R', rebuild);
+  makeButton(S, W-120, 22, 110, 36, 'Randomise', rebuild);
+  S.input.keyboard.on('keydown-R', rebuild);
 
-  // Poll keys with JustDown in update()
-  keys = this.input.keyboard.addKeys({
-    W:'W',A:'A',S:'S',D:'D', UP:'UP',LEFT:'LEFT',DOWN:'DOWN',RIGHT:'RIGHT'
+  keys = S.input.keyboard.addKeys({
+    W:'W',A:'A',S:'S',D:'D',
+    UP:'UP',LEFT:'LEFT',DOWN:'DOWN',RIGHT:'RIGHT'
   });
 
-  // RED player texture
-  const g = this.add.graphics();
-  g.fillStyle(0xff3333, 1).fillRoundedRect(0,0,TILE-10,TILE-10,4);
-  g.generateTexture('playerRed', TILE-10, TILE-10);
+  // RED player texture (very visible)
+  const g = S.add.graphics();
+  g.fillStyle(0xff2b2b, 1).fillRoundedRect(0,0,TILE-8,TILE-8,4);
+  g.lineStyle(2, 0xffffff, 0.8).strokeRoundedRect(0,0,TILE-8,TILE-8,4);
+  g.generateTexture('playerRed', TILE-8, TILE-8);
   g.destroy();
 
-  winText = this.add.text(W/2, H-28, 'You escaped! Press R for a new maze.', {
+  winText = S.add.text(W/2, H-28, 'You escaped! Press R for a new maze.', {
     fontFamily:'Arial Black', fontSize:'20px', color:'#24b2ff'
   }).setOrigin(0.5).setAlpha(0);
 
@@ -60,9 +62,9 @@ function update(){
   if (moving) return;
   let dx=0, dy=0;
   if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(keys.UP)) dy=-1;
-  else if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(keys.DOWN)) dy=1;
+  else if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(keys.DOWN)) dy= 1;
   else if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(keys.LEFT)) dx=-1;
-  else if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(keys.RIGHT)) dx=1;
+  else if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(keys.RIGHT)) dx= 1;
   if (dx||dy) tryMove(dx,dy);
 }
 
@@ -73,13 +75,13 @@ function tryMove(dx,dy){
     moving = true;
     playerGrid.x = nx; playerGrid.y = ny;
     const p = gridToPx(nx, ny);
-    scn.tweens.add({
+    S.tweens.add({
       targets: player, x: p.x, y: p.y, duration: 110, ease: 'Sine.easeOut',
       onComplete: ()=>{
         moving=false;
-        // Win when stepping onto the cell just inside the TOP gate
-        if (playerGrid.y===1 && playerGrid.x===startGate.x) {
-          scn.tweens.add({ targets: winText, alpha: 1, duration: 200 });
+        // Win when you step onto the cell just inside the TOP gate (row 1)
+        if (playerGrid.y === 1 && playerGrid.x === startGate.x) {
+          S.tweens.add({ targets: winText, alpha: 1, duration: 200 });
         }
       }
     });
@@ -87,94 +89,117 @@ function tryMove(dx,dy){
 }
 
 function rebuild(){
-  const gen = generateMaze(CELLSX, CELLSY);     // one top exit, one bottom entry
-  grid=gen.grid; startGate=gen.start; endGate=gen.end;
+  const gen = generateMaze(CELLSX, CELLSY);
+  grid = gen.grid; startGate = gen.start; endGate = gen.end;
   dims.gw = grid[0].length; dims.gh = grid.length;
 
-  // Center drawing
+  // center drawing
   offset.x = Math.floor((W - dims.gw*TILE)/2);
   offset.y = Math.floor((H - dims.gh*TILE)/2);
 
-  drawMaze(gfx, grid, startGate, endGate);
+  drawMaze(GFX, grid, startGate, endGate);
 
-  // Player spawns just inside the BOTTOM entry
-  const spawn = { x: endGate.x, y: endGate.y===dims.gh-1 ? endGate.y-1 : endGate.y+1 };
+  // Spawn player at the cell just INSIDE the bottom gate (row GH-2)
+  const spawn = { x: endGate.x, y: dims.gh - 2 };
   playerGrid = spawn;
   const p = gridToPx(spawn.x, spawn.y);
-  if (!player) player = scn.add.image(p.x, p.y, 'playerRed').setDepth(5);
+  if (!player) player = S.add.image(p.x, p.y, 'playerRed').setDepth(10);
   else player.setPosition(p.x, p.y);
 
   winText.setAlpha(0);
 }
 
-/* ---------- Maze generation: recursive backtracker ---------- */
+/* ===== Maze generation (recursive backtracker) ===== */
 function generateMaze(cols, rows){
-  const GW = 2*cols + 1, GH = 2*rows + 1;                 // full grid (walls+paths)
+  const GW = 2*cols + 1, GH = 2*rows + 1;               // full grid (walls+paths)
   const grid = Array.from({length:GH},()=>Array(GW).fill(1)); // 1=wall, 0=path
 
+  // carve
   const visited = Array.from({length:rows},()=>Array(cols).fill(false));
-  const stack=[{x:Phaser.Math.Between(0,cols-1), y:Phaser.Math.Between(0,rows-1)}];
-  visited[stack[0].y][stack[0].x]=true;
-  grid[stack[0].y*2+1][stack[0].x*2+1]=0;
+  const startCell = { x: Phaser.Math.Between(0, cols-1), y: Phaser.Math.Between(0, rows-1) };
+  const stack=[startCell];
+  visited[startCell.y][startCell.x]=true;
+  grid[startCell.y*2+1][startCell.x*2+1]=0;
 
   while(stack.length){
     const cur = stack[stack.length-1];
     const nbs=[];
-    if(cur.y>0 && !visited[cur.y-1][cur.x]) nbs.push({x:cur.x,y:cur.y-1});
-    if(cur.y<rows-1 && !visited[cur.y+1][cur.x]) nbs.push({x:cur.x,y:cur.y+1});
-    if(cur.x>0 && !visited[cur.y][cur.x-1]) nbs.push({x:cur.x-1,y:cur.y});
-    if(cur.x<cols-1 && !visited[cur.y][cur.x+1]) nbs.push({x:cur.x+1,y:cur.y});
+    if(cur.y>0        && !visited[cur.y-1][cur.x]) nbs.push({x:cur.x, y:cur.y-1});
+    if(cur.y<rows-1   && !visited[cur.y+1][cur.x]) nbs.push({x:cur.x, y:cur.y+1});
+    if(cur.x>0        && !visited[cur.y][cur.x-1]) nbs.push({x:cur.x-1, y:cur.y});
+    if(cur.x<cols-1   && !visited[cur.y][cur.x+1]) nbs.push({x:cur.x+1, y:cur.y});
 
     if(nbs.length){
       const nb = Phaser.Utils.Array.GetRandom(nbs);
       const gx=cur.x*2+1, gy=cur.y*2+1;
       const nx=nb.x*2+1,  ny=nb.y*2+1;
-      grid[(gy+ny)/2][(gx+nx)/2]=0; // break wall
+      grid[(gy+ny)/2][(gx+nx)/2]=0; // knock wall
       grid[ny][nx]=0;               // carve
       visited[nb.y][nb.x]=true;
       stack.push(nb);
     } else stack.pop();
   }
 
-  // Pick ONE exit at TOP and ONE entry at BOTTOM, aligned to corridor cells
-  const topCols=[], botCols=[];
-  for(let x=1;x<GW-1;x+=2){ if(grid[1][x]===0) topCols.push(x); if(grid[GH-2][x]===0) botCols.push(x); }
-  const topX = Phaser.Utils.Array.GetRandom(topCols) ?? 1;
-  const botX = Phaser.Utils.Array.GetRandom(botCols) ?? (GW-2);
-  // Ensure ONLY one opening on each edge
-  for(let x=1;x<GW-1;x++) { grid[0][x]=1; grid[GH-1][x]=1; }
-  grid[0][topX]=0;        // top exit
-  grid[GH-1][botX]=0;     // bottom entry
+  // Choose ONE exit at TOP (row 0) and ONE entry at BOTTOM (row GH-1)
+  const topChoices=[], botChoices=[];
+  for(let x=1;x<GW-1;x+=2){
+    if(grid[1][x]===0)    topChoices.push(x);
+    if(grid[GH-2][x]===0) botChoices.push(x);
+  }
+  const topX = Phaser.Utils.Array.GetRandom(topChoices) ?? 1;
+  const botX = Phaser.Utils.Array.GetRandom(botChoices) ?? (GW-2);
+
+  // Seal all edge cells, then open exactly one tile at top & bottom
+  for(let x=0;x<GW;x++){ grid[0][x]=1; grid[GH-1][x]=1; }
+  for(let y=0;y<GH;y++){ grid[y][0]=1; grid[y][GW-1]=1; } // left/right walls too
+  grid[0][topX]=0;         // top exit
+  grid[GH-1][botX]=0;      // bottom entry
 
   return { grid, start:{x:topX,y:0}, end:{x:botX,y:GH-1} };
 }
 
-/* ---------------- Rendering ---------------- */
+/* ===== Rendering ===== */
 function drawMaze(g, grid, start, end){
   g.clear();
   const GW=grid[0].length, GH=grid.length, offX=offset.x, offY=offset.y;
 
-  // Corridors (brown)
-  g.fillStyle(0x7a5a34,1);
-  for(let y=0;y<GH;y++)
-    for(let x=0;x<GW;x++)
-      if(grid[y][x]===0) g.fillRect(offX+x*TILE, offY+y*TILE, TILE, TILE);
+  // Draw walls first (so border is obvious)
+  g.fillStyle(0x1f2330, 1);  // dark walls
+  for(let y=0;y<GH;y++){
+    for(let x=0;x<GW;x++){
+      if(grid[y][x]===1){
+        g.fillRect(offX+x*TILE, offY+y*TILE, TILE, TILE);
+      }
+    }
+  }
 
-  // Gates (blue) — one at top, one at bottom
-  g.fillStyle(0x24b2ff,1);
-  g.fillRect(offX+start.x*TILE, offY+start.y*TILE, TILE, TILE);
-  g.fillRect(offX+end.x*TILE,   offY+end.y*TILE,   TILE, TILE);
+  // Draw corridors (brown) on top of walls for crisp paths
+  g.fillStyle(0x7a5a34, 1);
+  for(let y=0;y<GH;y++){
+    for(let x=0;x<GW;x++){
+      if(grid[y][x]===0){
+        g.fillRect(offX+x*TILE, offY+y*TILE, TILE, TILE);
+      }
+    }
+  }
 
-  // Border
-  g.lineStyle(2,0x3a2b1a,1);
+  // Gates (blue) – clearly visible
+  g.fillStyle(0x24b2ff, 1);
+  g.fillRect(offX+start.x*TILE, offY+start.y*TILE, TILE, TILE);        // top exit
+  g.fillRect(offX+end.x*TILE,   offY+end.y*TILE,   TILE, TILE);        // bottom entry
+
+  // Bold border frame around whole maze
+  g.lineStyle(4, 0xf2d16d, 1);
   g.strokeRect(offX, offY, GW*TILE, GH*TILE);
 }
 
-function gridToPx(gx,gy){ return { x: offset.x + gx*TILE + TILE/2, y: offset.y + gy*TILE + TILE/2 }; }
+function gridToPx(gx,gy){
+  return { x: offset.x + gx*TILE + TILE/2, y: offset.y + gy*TILE + TILE/2 };
+}
 
-/* ---------------- UI helpers ---------------- */
+/* ===== UI helpers ===== */
 function makeButton(scene,x,y,w,h,label,onClick){
-  const g = scene.add.graphics({x:x-w/2,y:y-h/2});
+  const g = scene.add.graphics({x:x-w/2, y:y-h/2});
   drawBtn(g,w,h,false);
   scene.add.text(x,y,label,{fontFamily:'Arial',fontSize:'16px',color:'#fff'}).setOrigin(0.5);
   scene.add.zone(x,y,w,h).setInteractive({useHandCursor:true})
