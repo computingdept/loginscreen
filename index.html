@@ -2,218 +2,188 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Phaser – 14×14 Maze (Red Player, Single Entry/Exit)</title>
+  <title>Phaser – Bot Interaction (SPACE to talk)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>html,body{margin:0;background:#101015}</style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.js"></script>
+  <style>html,body{margin:0;background:#0b0f14}</style>
 </head>
 <body>
 <script>
 const config = {
   type: Phaser.AUTO,
-  width: 900,
-  height: 560,
-  backgroundColor: '#101015',
-  scene: { preload(){}, create, update }
+  width: 960,
+  height: 540,
+  backgroundColor: '#0b0f14',
+  physics: {
+    default: 'arcade',
+    arcade: { gravity: { y: 900 }, debug: false }
+  },
+  scene: { preload, create, update }
 };
 new Phaser.Game(config);
 
-// ===== SETTINGS =====
-const CELLSX = 14, CELLSY = 14;   // path cells (not counting walls)
-const TILE   = 28;                 // pixels per grid tile
+let player, bot, platforms;
+let cursors, spaceKey, escKey;
+let canMove = true;
+let dialogOpen = false;
+let nearPrompt;     // “SPACE to talk” hint
+let dialogGroup;    // container for dialog UI
+let patrol = { minX: 520, maxX: 820, speed: 60, paused: false };
 
-// ===== STATE =====
-let S, GFX, W, H;
-let grid, startGate, endGate, dims={gw:0,gh:0}, offset={x:0,y:0};
-let player, playerGrid={x:0,y:0}, moving=false;
-let keys, winText;
+function preload(){
+  // Build simple textures with Graphics so there are no external files.
+
+  // Player texture (green)
+  const g1 = this.add.graphics();
+  g1.fillStyle(0x3ad97a,1).fillRoundedRect(0,0,24,36,6);
+  g1.lineStyle(2,0x1b6138,1).strokeRoundedRect(0,0,24,36,6);
+  g1.generateTexture('playerTex',24,36); g1.destroy();
+
+  // Bot texture (blue)
+  const g2 = this.add.graphics();
+  g2.fillStyle(0x3aa1ff,1).fillRoundedRect(0,0,24,36,6);
+  g2.lineStyle(2,0x124a84,1).strokeRoundedRect(0,0,24,36,6);
+  g2.generateTexture('botTex',24,36); g2.destroy();
+
+  // Platform tile
+  const g3 = this.add.graphics();
+  g3.fillStyle(0x4b5c6b,1).fillRect(0,0,64,20);
+  g3.lineStyle(2,0x2c3640,1).strokeRect(0,0,64,20);
+  g3.generateTexture('tile',64,20); g3.destroy();
+}
 
 function create(){
-  S = this; W = S.scale.width; H = S.scale.height;
-  GFX = S.add.graphics();
+  const W = this.scale.width, H = this.scale.height;
 
-  S.add.text(16, 12, 'WASD / Arrows to move • R to randomise', {
-    fontFamily:'Arial Black', fontSize:'18px', color:'#e5d6a7'
+  // Static platforms
+  platforms = this.physics.add.staticGroup();
+  // Ground (span across)
+  for(let x=0;x<W;x+=64){ platforms.create(x+32,H-20,'tile').refreshBody(); }
+  // A ledge where the bot patrols
+  for(let x=520;x<=840;x+=64){ platforms.create(x+32, H-160, 'tile').refreshBody(); }
+  // Small ledge for fun
+  for(let x=200;x<=328;x+=64){ platforms.create(x+32, H-260,'tile').refreshBody(); }
+
+  // Player
+  player = this.physics.add.sprite(120, H-100, 'playerTex');
+  player.setCollideWorldBounds(true).setBounce(0).setDragX(1200);
+  player.body.setSize(20,34).setOffset(2,2);
+
+  // Bot (patrols on the upper ledge)
+  bot = this.physics.add.sprite(680, H-200, 'botTex');
+  bot.setCollideWorldBounds(true).setBounce(0);
+  bot.body.setSize(20,34).setOffset(2,2);
+  bot.setVelocityX(patrol.speed);
+
+  // Collisions with platforms
+  this.physics.add.collider(player, platforms);
+  this.physics.add.collider(bot, platforms);
+
+  cursors = this.input.keyboard.createCursorKeys();
+  this.aKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+  this.dKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+  this.wKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
+  this.left = () => (cursors.left.isDown || this.aKey.isDown);
+  this.right = () => (cursors.right.isDown || this.dKey.isDown);
+  this.jump = () => (cursors.up.isDown || this.wKey.isDown);
+
+  spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+  escKey   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+
+  // “SPACE to talk” hint (hidden by default)
+  nearPrompt = this.add.text(0,0,'SPACE to talk',{
+    fontFamily:'Arial', fontSize:'16px', color:'#fff',
+    backgroundColor:'#1a2733', padding:{left:8,right:8,top:4,bottom:4}
+  }).setAlpha(0).setDepth(1000);
+
+  // Dialog UI container (hidden initially)
+  dialogGroup = this.add.container(W/2, 130).setDepth(1500).setVisible(false);
+  const panel = this.add.rectangle(0,0, 420, 130, 0x0f1822, 0.95)
+                  .setStrokeStyle(2, 0x3aa1ff, 1).setOrigin(0.5);
+  const txt1  = this.add.text(0,-26, '🤖 Bot: What do you want?', {
+                  fontFamily:'Arial', fontSize:'20px', color:'#ffffff'
+                }).setOrigin(0.5);
+  const txt2  = this.add.text(0,12, 'SPACE: Continue   •   ESC: Cancel', {
+                  fontFamily:'Arial', fontSize:'16px', color:'#b7c9d3'
+                }).setOrigin(0.5);
+  dialogGroup.add([panel, txt1, txt2]);
+
+  // Open/close dialog handlers
+  spaceKey.on('down', () => {
+    if (isCloseToBot() && !dialogOpen) openDialog.call(this);
+    else if (dialogOpen) closeDialog.call(this);
   });
+  escKey.on('down', () => { if (dialogOpen) closeDialog.call(this); });
 
-  makeButton(S, W-120, 22, 110, 36, 'Randomise', rebuild);
-  S.input.keyboard.on('keydown-R', rebuild);
-
-  keys = S.input.keyboard.addKeys({
-    W:'W',A:'A',S:'S',D:'D',
-    UP:'UP',LEFT:'LEFT',DOWN:'DOWN',RIGHT:'RIGHT'
-  });
-
-  // RED player texture (very visible)
-  const g = S.add.graphics();
-  g.fillStyle(0xff2b2b, 1).fillRoundedRect(0,0,TILE-8,TILE-8,4);
-  g.lineStyle(2, 0xffffff, 0.8).strokeRoundedRect(0,0,TILE-8,TILE-8,4);
-  g.generateTexture('playerRed', TILE-8, TILE-8);
-  g.destroy();
-
-  winText = S.add.text(W/2, H-28, 'You escaped! Press R for a new maze.', {
-    fontFamily:'Arial Black', fontSize:'20px', color:'#24b2ff'
-  }).setOrigin(0.5).setAlpha(0);
-
-  rebuild();
+  // Simple camera follow (optional)
+  this.cameras.main.startFollow(player, true, 0.1, 0.1);
+  this.cameras.main.setBounds(0,0,W,H);
 }
 
-function update(){
-  if (moving) return;
-  let dx=0, dy=0;
-  if (Phaser.Input.Keyboard.JustDown(keys.W) || Phaser.Input.Keyboard.JustDown(keys.UP)) dy=-1;
-  else if (Phaser.Input.Keyboard.JustDown(keys.S) || Phaser.Input.Keyboard.JustDown(keys.DOWN)) dy= 1;
-  else if (Phaser.Input.Keyboard.JustDown(keys.A) || Phaser.Input.Keyboard.JustDown(keys.LEFT)) dx=-1;
-  else if (Phaser.Input.Keyboard.JustDown(keys.D) || Phaser.Input.Keyboard.JustDown(keys.RIGHT)) dx= 1;
-  if (dx||dy) tryMove(dx,dy);
-}
+function update(time, delta){
+  // Player controls (disabled during dialog)
+  if (canMove){
+    const speed = 210;
+    if (this.left())  player.setVelocityX(-speed);
+    else if (this.right()) player.setVelocityX(speed);
+    else player.setVelocityX(0);
 
-function tryMove(dx,dy){
-  const nx = playerGrid.x + dx;
-  const ny = playerGrid.y + dy;
-  if (ny>=0 && ny<dims.gh && nx>=0 && nx<dims.gw && grid[ny][nx]===0){
-    moving = true;
-    playerGrid.x = nx; playerGrid.y = ny;
-    const p = gridToPx(nx, ny);
-    S.tweens.add({
-      targets: player, x: p.x, y: p.y, duration: 110, ease: 'Sine.easeOut',
-      onComplete: ()=>{
-        moving=false;
-        // Win when you step onto the cell just inside the TOP gate (row 1)
-        if (playerGrid.y === 1 && playerGrid.x === startGate.x) {
-          S.tweens.add({ targets: winText, alpha: 1, duration: 200 });
-        }
-      }
-    });
+    // Jump only when on floor
+    if (this.jump() && player.body.blocked.down) player.setVelocityY(-420);
+  } else {
+    // Freeze player during dialog
+    player.setVelocityX(0);
+  }
+
+  // Bot patrol (when not paused by dialog)
+  if (!patrol.paused){
+    // Flip direction at patrol edges
+    if (bot.x <= patrol.minX) { bot.setVelocityX(+patrol.speed); bot.setFlipX(false); }
+    if (bot.x >= patrol.maxX) { bot.setVelocityX(-patrol.speed); bot.setFlipX(true);  }
+  } else {
+    bot.setVelocityX(0);
+  }
+
+  // Show/hide “SPACE to talk” hint if player is close
+  if (!dialogOpen && isCloseToBot()){
+    nearPrompt.setPosition(bot.x, bot.y - 48).setAlpha(0.95);
+  } else {
+    nearPrompt.setAlpha(0);
   }
 }
 
-function rebuild(){
-  const gen = generateMaze(CELLSX, CELLSY);
-  grid = gen.grid; startGate = gen.start; endGate = gen.end;
-  dims.gw = grid[0].length; dims.gh = grid.length;
+/* ---------- Helpers ---------- */
 
-  // center drawing
-  offset.x = Math.floor((W - dims.gw*TILE)/2);
-  offset.y = Math.floor((H - dims.gh*TILE)/2);
-
-  drawMaze(GFX, grid, startGate, endGate);
-
-  // Spawn player at the cell just INSIDE the bottom gate (row GH-2)
-  const spawn = { x: endGate.x, y: dims.gh - 2 };
-  playerGrid = spawn;
-  const p = gridToPx(spawn.x, spawn.y);
-  if (!player) player = S.add.image(p.x, p.y, 'playerRed').setDepth(10);
-  else player.setPosition(p.x, p.y);
-
-  winText.setAlpha(0);
+function isCloseToBot(){
+  // Close if horizontally near and vertically overlapping-ish
+  const dx = Math.abs(player.x - bot.x);
+  const dy = Math.abs(player.y - bot.y);
+  return dx < 40 && dy < 50; // tweak range if needed
 }
 
-/* ===== Maze generation (recursive backtracker) ===== */
-function generateMaze(cols, rows){
-  const GW = 2*cols + 1, GH = 2*rows + 1;               // full grid (walls+paths)
-  const grid = Array.from({length:GH},()=>Array(GW).fill(1)); // 1=wall, 0=path
+function openDialog(){
+  // Pause movement for both
+  canMove = false;
+  patrol.paused = true;
+  bot.setVelocityX(0);
 
-  // carve
-  const visited = Array.from({length:rows},()=>Array(cols).fill(false));
-  const startCell = { x: Phaser.Math.Between(0, cols-1), y: Phaser.Math.Between(0, rows-1) };
-  const stack=[startCell];
-  visited[startCell.y][startCell.x]=true;
-  grid[startCell.y*2+1][startCell.x*2+1]=0;
-
-  while(stack.length){
-    const cur = stack[stack.length-1];
-    const nbs=[];
-    if(cur.y>0        && !visited[cur.y-1][cur.x]) nbs.push({x:cur.x, y:cur.y-1});
-    if(cur.y<rows-1   && !visited[cur.y+1][cur.x]) nbs.push({x:cur.x, y:cur.y+1});
-    if(cur.x>0        && !visited[cur.y][cur.x-1]) nbs.push({x:cur.x-1, y:cur.y});
-    if(cur.x<cols-1   && !visited[cur.y][cur.x+1]) nbs.push({x:cur.x+1, y:cur.y});
-
-    if(nbs.length){
-      const nb = Phaser.Utils.Array.GetRandom(nbs);
-      const gx=cur.x*2+1, gy=cur.y*2+1;
-      const nx=nb.x*2+1,  ny=nb.y*2+1;
-      grid[(gy+ny)/2][(gx+nx)/2]=0; // knock wall
-      grid[ny][nx]=0;               // carve
-      visited[nb.y][nb.x]=true;
-      stack.push(nb);
-    } else stack.pop();
-  }
-
-  // Choose ONE exit at TOP (row 0) and ONE entry at BOTTOM (row GH-1)
-  const topChoices=[], botChoices=[];
-  for(let x=1;x<GW-1;x+=2){
-    if(grid[1][x]===0)    topChoices.push(x);
-    if(grid[GH-2][x]===0) botChoices.push(x);
-  }
-  const topX = Phaser.Utils.Array.GetRandom(topChoices) ?? 1;
-  const botX = Phaser.Utils.Array.GetRandom(botChoices) ?? (GW-2);
-
-  // Seal all edge cells, then open exactly one tile at top & bottom
-  for(let x=0;x<GW;x++){ grid[0][x]=1; grid[GH-1][x]=1; }
-  for(let y=0;y<GH;y++){ grid[y][0]=1; grid[y][GW-1]=1; } // left/right walls too
-  grid[0][topX]=0;         // top exit
-  grid[GH-1][botX]=0;      // bottom entry
-
-  return { grid, start:{x:topX,y:0}, end:{x:botX,y:GH-1} };
+  dialogOpen = true;
+  dialogGroup.setVisible(true);
+  // Small pop animation
+  this.tweens.add({ targets: dialogGroup, scale: { from:0.9, to:1 }, alpha:{from:0, to:1}, duration:120 });
 }
 
-/* ===== Rendering ===== */
-function drawMaze(g, grid, start, end){
-  g.clear();
-  const GW=grid[0].length, GH=grid.length, offX=offset.x, offY=offset.y;
-
-  // Draw walls first (so border is obvious)
-  g.fillStyle(0x1f2330, 1);  // dark walls
-  for(let y=0;y<GH;y++){
-    for(let x=0;x<GW;x++){
-      if(grid[y][x]===1){
-        g.fillRect(offX+x*TILE, offY+y*TILE, TILE, TILE);
-      }
-    }
-  }
-
-  // Draw corridors (brown) on top of walls for crisp paths
-  g.fillStyle(0x7a5a34, 1);
-  for(let y=0;y<GH;y++){
-    for(let x=0;x<GW;x++){
-      if(grid[y][x]===0){
-        g.fillRect(offX+x*TILE, offY+y*TILE, TILE, TILE);
-      }
-    }
-  }
-
-  // Gates (blue) – clearly visible
-  g.fillStyle(0x24b2ff, 1);
-  g.fillRect(offX+start.x*TILE, offY+start.y*TILE, TILE, TILE);        // top exit
-  g.fillRect(offX+end.x*TILE,   offY+end.y*TILE,   TILE, TILE);        // bottom entry
-
-  // Bold border frame around whole maze
-  g.lineStyle(4, 0xf2d16d, 1);
-  g.strokeRect(offX, offY, GW*TILE, GH*TILE);
+function closeDialog(){
+  dialogOpen = false;
+  dialogGroup.setVisible(false);
+  canMove = true;
+  patrol.paused = false; // bot resumes patrolling
 }
 
-function gridToPx(gx,gy){
-  return { x: offset.x + gx*TILE + TILE/2, y: offset.y + gy*TILE + TILE/2 };
-}
-
-/* ===== UI helpers ===== */
-function makeButton(scene,x,y,w,h,label,onClick){
-  const g = scene.add.graphics({x:x-w/2, y:y-h/2});
-  drawBtn(g,w,h,false);
-  scene.add.text(x,y,label,{fontFamily:'Arial',fontSize:'16px',color:'#fff'}).setOrigin(0.5);
-  scene.add.zone(x,y,w,h).setInteractive({useHandCursor:true})
-    .on('pointerover',()=>drawBtn(g,w,h,true))
-    .on('pointerout', ()=>drawBtn(g,w,h,false))
-    .on('pointerdown',()=>onClick&&onClick());
-}
-function drawBtn(g,w,h,hover){
-  g.clear();
-  g.fillStyle(hover?0x009a70:0x006e51,1);
-  g.fillRoundedRect(0,0,w,h,8);
-  g.lineStyle(2,0xe6d971,1);
-  g.strokeRoundedRect(0,0,w,h,8);
-}
+/* (Optional) You could extend this:
+   - Replace dialog text with choices (“Trade”, “Quest”, “Bye”).
+   - On SPACE while dialogOpen, cycle options or act on a selected one.
+   - Use a Phaser DOMElement or bitmap text for more UI polish. */
 </script>
 </body>
 </html>
