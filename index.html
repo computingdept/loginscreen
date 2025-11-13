@@ -68,7 +68,11 @@ function create(){
   player = this.physics.add.sprite(120, H-100, 'playerTex');
   player.setCollideWorldBounds(true).setBounce(0).setDragX(1200);
   player.body.setSize(20,34).setOffset(2,2);
-
+  let canDoubleJump = false;   // true when allowed to jump again mid-air
+  let jumpKey;                 // store whichever key you want for jump
+  
+  jumpKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W); 
+  
   // Bot (patrols on the upper ledge)
   bot = this.physics.add.sprite(680, H-200, 'botTex');
   bot.setCollideWorldBounds(true).setBounce(0);
@@ -128,12 +132,26 @@ function update(time, delta){
     else if (this.right()) player.setVelocityX(speed);
     else player.setVelocityX(0);
 
-    // Jump only when on floor
-    if (this.jump() && player.body.blocked.down) player.setVelocityY(-420);
-  } else {
-    // Freeze player during dialog
-    player.setVelocityX(0);
+   // check if player is standing on something
+const onGround = player.body.blocked.down || player.body.touching.down;
+
+// --- normal jump ---
+if (Phaser.Input.Keyboard.JustDown(jumpKey)) {
+  if (onGround) {
+    // first jump
+    player.setVelocityY(-420);
+    canDoubleJump = true; // enable second jump
+  } 
+  else if (canDoubleJump) {
+    // second jump (mid-air)
+    player.setVelocityY(-420);
+    canDoubleJump = false; // now you’ve used it up
   }
+}
+
+// when we land, reset double-jump ability
+if (onGround) canDoubleJump = true;
+
 
   // Bot patrol (when not paused by dialog)
   if (!patrol.paused){
@@ -150,6 +168,8 @@ function update(time, delta){
   } else {
     nearPrompt.setAlpha(0);
   }
+
+  
 }
 
 /* ---------- Helpers ---------- */
