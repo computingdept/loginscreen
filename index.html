@@ -1,166 +1,125 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Phaser Side-Scroller with Inventory Bar</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.js"></script>
+  <meta charset="utf-8">
+  <title>Clouds Above</title>
   <style>
-    html,body { margin:0; padding:0; background:#0b0f14; }
+    body {
+      margin: 0;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    canvas { display: block; }
   </style>
 </head>
 <body>
+
+<!-- Phaser CDN -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+
 <script>
-/*
-SideScroller + Inventory Bar
-----------------------------
-- Player can move + jump
-- Platforms
-- Collect gems + keys
-- Lives, keys, gems displayed in HUD bar at bottom
-*/
+/* ================= HOME SCREEN ================= */
+
+class HomeScreen extends Phaser.Scene {
+  constructor() { super({ key: "HomeScreen" }); }
+
+  create() {
+    this.cameras.main.setBackgroundColor("#6ec6ff");
+
+    this.add.text(625, 80, "Clouds Above", {
+      fontFamily: "Arial",
+      fontSize: 64,
+      color: "#ffffff",
+      fontStyle: "bold"
+    }).setOrigin(0.5);
+
+    const play = this.add.text(625, 300, "PLAY", {
+      fontFamily: "Arial",
+      fontSize: 40,
+      color: "#000",
+      backgroundColor: "#fff",
+      padding: { left: 20, right: 20, top: 10, bottom: 10 }
+    }).setOrigin(0.5).setInteractive();
+
+    play.on("pointerover", () => play.setStyle({ backgroundColor: "#000", color: "#fff" }));
+    play.on("pointerout",  () => play.setStyle({ backgroundColor: "#fff", color: "#000" }));
+    play.on("pointerdown", () => this.scene.start("GameScreen"));
+  }
+}
+
+/* ================= GAME SCREEN ================= */
+
+class GameScreen extends Phaser.Scene {
+  constructor() { super({ key: "GameScreen" }); }
+
+  create() {
+    this.cameras.main.setBackgroundColor("#6ec6ff");
+
+    // Generate square player
+    const size = 60;
+    const g = this.add.graphics();
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(0, 0, size, size);
+    g.generateTexture("playerSquare", size, size);
+    g.destroy();
+
+    // Generate platform
+    const platW = 300, platH = 200;
+    const g2 = this.add.graphics();
+    g2.fillStyle(0xdddddd, 1);
+    g2.fillRect(0, 0, platW, platH);
+    g2.generateTexture("platformRect", platW, platH);
+    g2.destroy();
+
+    this.platform = this.physics.add.staticImage(625, 450, "platformRect");
+    this.platform.refreshBody();
+
+    this.player = this.physics.add.sprite(625, 350, "playerSquare");
+    this.player.setCollideWorldBounds(true);
+    this.player.body.setSize(size, size, true);
+
+    this.speed = 200;
+
+    this.keys = this.input.keyboard.addKeys({
+      up: "W", down: "S", left: "A", right: "D"
+    });
+  }
+
+  update() {
+    if (this.keys.left.isDown) this.player.setVelocityX(-this.speed);
+    else if (this.keys.right.isDown) this.player.setVelocityX(this.speed);
+    else this.player.setVelocityX(0);
+
+    if (this.keys.up.isDown) this.player.setVelocityY(-this.speed);
+    else if (this.keys.down.isDown) this.player.setVelocityY(this.speed);
+    else this.player.setVelocityY(0);
+
+    // Clamp to platform
+    const p = this.platform.getBounds();
+    const hw = this.player.displayWidth / 2;
+    const hh = this.player.displayHeight / 2;
+
+    this.player.x = Phaser.Math.Clamp(this.player.x, p.left + hw, p.right - hw);
+    this.player.y = Phaser.Math.Clamp(this.player.y, p.top + hh, p.bottom - hh);
+  }
+}
+
+/* ================= CONFIG ================= */
 
 const config = {
   type: Phaser.AUTO,
-  width: 960,
-  height: 540,
-  backgroundColor: "#87ceeb",
+  width: 1250,
+  height: 825,
+  scene: [HomeScreen, GameScreen],
   physics: {
     default: "arcade",
-    arcade: { gravity: { y: 900 }, debug: false }
-  },
-  scene: { preload, create, update }
+    arcade: { gravity: { y: 0 }, debug: false }
+  }
 };
+
 new Phaser.Game(config);
-
-let player, cursors, platforms;
-let gems, keys;
-let HUD, livesText, gemText, keyText;
-let lives = 3, gemCount = 0, keyCount = 0;
-
-function preload() {
-  // Player texture
-  const g1 = this.add.graphics();
-  g1.fillStyle(0x00cc66, 1).fillRoundedRect(0, 0, 32, 48, 8);
-  g1.generateTexture("playerTex", 32, 48);
-  g1.destroy();
-
-  // Platform texture
-  const g2 = this.add.graphics();
-  g2.fillStyle(0x654321, 1).fillRect(0, 0, 64, 20);
-  g2.generateTexture("platformTex", 64, 20);
-  g2.destroy();
-
-  // Gem texture
-  const g3 = this.add.graphics();
-  g3.fillStyle(0x33ccff, 1).fillCircle(10,10,10);
-  g3.generateTexture("gemTex", 20, 20);
-  g3.destroy();
-
-  // Key texture
-  const g4 = this.add.graphics();
-  g4.fillStyle(0xffd700, 1).fillRect(4,4,12,4);
-  g4.fillRect(0,0,4,4);
-  g4.generateTexture("keyTex", 20, 20);
-  g4.destroy();
-}
-
-function create() {
-  const W = this.scale.width;
-  const H = this.scale.height;
-
-  // --- LEVEL ---
-  platforms = this.physics.add.staticGroup();
-  for (let x = 0; x < W * 3; x += 64) {
-    platforms.create(x, H - 40, "platformTex").refreshBody();
-  }
-  // Small platforms
-  platforms.create(300, 400, "platformTex");
-  platforms.create(500, 320, "platformTex");
-  platforms.create(780, 260, "platformTex");
-
-  // --- PLAYER ---
-  player = this.physics.add.sprite(100, H - 200, "playerTex");
-  player.setCollideWorldBounds(true);
-  this.physics.add.collider(player, platforms);
-
-  cursors = this.input.keyboard.createCursorKeys();
-
-  // --- COLLECTABLES ---
-  gems = this.physics.add.group();
-  keys = this.physics.add.group();
-
-  gems.create(300, 360, "gemTex");
-  gems.create(500, 280, "gemTex");
-  gems.create(780, 220, "gemTex");
-
-  keys.create(900, H - 80, "keyTex");
-
-  this.physics.add.collider(gems, platforms);
-  this.physics.add.collider(keys, platforms);
-
-  this.physics.add.overlap(player, gems, getGem, null, this);
-  this.physics.add.overlap(player, keys, getKey, null, this);
-
-  // --- CAMERA ---
-  this.cameras.main.setBounds(0, 0, W * 3, H);
-  this.cameras.main.startFollow(player, true, 0.1, 0.1);
-
-  // --- INVENTORY BAR / HUD ---
-  HUD = this.add.rectangle(0, H - 80, W, 80, 0x000000, 0.40)
-            .setOrigin(0, 0)
-            .setScrollFactor(0,0)   // stick to screen
-            .setDepth(999);
-
-  livesText = this.add.text(20, H - 60, "❤️ Lives: 3", {
-    fontFamily: "Arial",
-    fontSize: "22px",
-    color: "#fff"
-  }).setScrollFactor(0).setDepth(1000);
-
-  gemText = this.add.text(240, H - 60, "💎 Gems: 0", {
-    fontFamily: "Arial",
-    fontSize: "22px",
-    color: "#33ccff"
-  }).setScrollFactor(0).setDepth(1000);
-
-  keyText = this.add.text(450, H - 60, "🔑 Keys: 0", {
-    fontFamily: "Arial",
-    fontSize: "22px",
-    color: "#ffd700"
-  }).setScrollFactor(0).setDepth(1000);
-}
-
-// --- Collect gem ---
-function getGem(player, gem) {
-  gem.disableBody(true, true);
-  gemCount++;
-  gemText.setText("💎 Gems: " + gemCount);
-}
-
-// --- Collect key ---
-function getKey(player, key) {
-  key.disableBody(true, true);
-  keyCount++;
-  keyText.setText("🔑 Keys: " + keyCount);
-}
-
-function update() {
-  const speed = 220;
-
-  if (cursors.left.isDown) {
-    player.setVelocityX(-speed);
-  } else if (cursors.right.isDown) {
-    player.setVelocityX(speed);
-  } else {
-    player.setVelocityX(0);
-  }
-
-  // Jump
-  if (cursors.up.isDown && player.body.blocked.down) {
-    player.setVelocityY(-450);
-  }
-}
 </script>
 </body>
 </html>
